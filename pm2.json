@@ -1,0 +1,15 @@
+{
+  "apps": [{
+    "name": "hyAdmin-server",
+    "script": "production.js",
+    "cwd": "C:\workspace\personal\hyAdmin-server",
+    "exec_mode": "fork",
+    "max_memory_restart": "1G",
+    "autorestart": true,
+    "node_args": [],
+    "args": [],
+    "env": {
+      
+    }
+  }]
+}
