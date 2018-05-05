@@ -6,159 +6,120 @@ const tablePrefix = 'homyit_';
 
 module.exports = class HyAll extends HyBase {
 
-    async allAction() {
-      const {pagination: {pageSize, pageNo}} = this.post();
-      const {relation_ids, table_name} = await this.getRouterFields(['relation_ids', 'table_name']);
-      const relations = await this.model('frame_relations').where({id: ['IN', relation_ids.split(',')]}).select();
-      const limit = pageSize && pageNo ? ` LIMIT ${(pageNo - 1) * pageSize},${pageNo * pageSize} ` : '';
+  async allAction() {
+    const {
+      link_field,
+      link_id,
+      table_name,
+      child,
+    } = await this.getRouterFields(['link_field', 'link_id', 'table_name', 'child']);
+    const link_module = child && child.module_name;
 
-      let totalFields = [];
-      let relateConditions = '';
+    const current_model = await this.getCurrentModel();
+    const model = await this.getModel(current_model);
+    const params = this.getParams();
 
-      for (let item of relations) {
-        let {table, field, fields, relate_table, relate_field, relate_fields, relate_type} = item;
-        const isRelate = relate_table && relate_fields && relate_type;
+    const result = await model.all(table_name, params);
 
-        relate_table = tablePrefix + relate_table;
-        table = tablePrefix + table;
+    return this.json({...result, link_field, link_id, link_module});
+  }
 
-        totalFields = totalFields.concat(fields.split(',').map(field => `${table}.${field.trim()}`));
+  async moduleOptionAction() {
+    const current_model = await this.getCurrentModel();
+    const model = await this.getModel(current_model);
 
-        if (!!isRelate) {
-          totalFields = totalFields.concat(relate_fields.split(',').map(val =>
-            `${relate_table}.${val.trim()} AS ${relate_table}${relate_sep}${val.trim()} `
-          ));
-          relateConditions += `${relate_type} JOIN ${relate_table} ON ${table}.${field}=${relate_table}.${relate_field}`;
-        }
-      }
+    this.json({status: true, moduleOptions: model.getModuleOption()});
+  }
 
-      const totalFieldsStr = Array.from(new Set(totalFields)).join(',');
-      const select = `SELECT ${totalFieldsStr} FROM homyit_${table_name} ${relateConditions} ${limit}`;
-      console.log(select);
-      const listData = await this.model(table_name).query(select);
+  async moduleListAction() {
+    const table_name = await this.getRouterFields('table_name');
+    const current_model = await this.getCurrentModel();
+    const model = await this.getModel(current_model);
+    const params = this.getParams();
 
-      const packColumns = await this.getColumns();
+    const listData = await model.getModuleList(table_name, params);
 
-      return this.json({...packColumns, listData});
-    }
+    this.json({status: true, listData});
+  }
 
-    async getColumns() {
-      let {id, relation_ids, table_name, module_name} = await this.getRouterFields(['id', 'relation_ids', 'table_name', 'module_name']);
-      const {step} = this.post();
+  getParams() {
+    const {params} = this.post();
+    const {page, ...ids} = params;
+    return ids;
+  }
 
-      if (step && step > 0) {
-        let count = 1;
-        let pid = id;
-        while (count <= step) {
-          const {
-            id,
-            table_name: step_table_name,
-            relation_ids: step_relation_ids,
-            module_name: step_module_name
-          } = await this.model('frame_modules').where({pid}).find();
+  async getValues() {
+    let {values} = this.post();
+    let params = this.getParams();
+    return {...values, ...params};
+  }
 
-          if (count++ === step) {
-            table_name = step_table_name;
-            relation_ids = step_relation_ids;
-            module_name += '/' + step_module_name;
-          }
-          pid = id;
-        }
-      }
-      const relations = await this.model('frame_relations').where({id: ['IN', relation_ids.split(',')]}).select();
-      let columns = [];
+  async getCurrentModel() {
+    const {
+      frame_nav,
+      module_name
+    } = await this.getRouterFields(['frame_nav', 'module_name']);
 
-      for (let item of relations) {
-        const {table, fields, relate_table, relate_fields, relate_type} = item;
-        const isRelate = relate_table && relate_fields && relate_type;
+    return frame_nav.value + '/' + module_name;
+  }
+  async getModel(currentModel) {
+    const modules = await this.getModules();
+    const userId = await this.session('userId');
+    const roleId = await this.session('roleId');
+    const userInfo = {modules, userId, roleId};
 
-        let tableColumns = await this.model('frame_table_field').where({
-          table_name: table,
-          data_index: ['IN', fields.split(',')]
-        }).select();
+    const models = Object.keys(this.ctx.app.models);
+    const modelName = ~models.indexOf(currentModel) ? currentModel : 'Common/Empty';
 
-        if (table_name !== table) {
-          tableColumns = tableColumns.map(item => ({
-            ...item,
-            data_index: `${table}${relate_sep}${item.data_index}`
-          }));
-        }
-        columns = columns.concat(tableColumns);
+    return this.model(modelName, {userInfo});
+  }
 
-        if (!!isRelate) {
-          const tableColumns = await this.model('frame_table_field').where({
-            table_name: relate_table,
-            data_index: ['IN', relate_fields.split(',')]
-          }).select();
+  async nextFormAction() {
+    const table_name = await this.getRouterFields('table_name');
+    const {step, steps, path} = this.post();
 
-          columns = columns.concat(tableColumns.map(item => ({
-            ...item,
-            data_index: `${tablePrefix}${relate_table}${relate_sep}${item.data_index}`
-          })));
-        }
-      }
+    const currentModel = steps[step].moduleUrl.slice(1);
+    const model = await this.getModel(currentModel);
 
-      const packColumns = {};
+    const {formColumns} = await model.packColumns(table_name);
 
-      for (let {data_index, title} of columns) {
-        if (data_index === 'id') continue;
-        packColumns[data_index] = {title}
-      }
+    return this.json(formColumns);
+  }
+  async ajaxAction() {
+      const type = this.ctx.query.q;
+      await this[`ajax_${type}`]();
+  }
 
-      return {columns: packColumns, module_name: '/' + module_name};
+  async ajax_insert() {
+    const {link_id, table_name} = await this.getRouterFields(['table_name', 'link_id']);
+    const values = await this.getValues();
+    const current_model = await this.getCurrentModel();
+    const model = await this.getModel(current_model);
+    const insertId = await model.ajax_insert(table_name, values);
+    const listData = await model.getListData(table_name, {id: insertId});
 
-    }
+    return insertId ? this.json({status: true, id: insertId, listData: listData[0]}) : this.json({status: false});
+  }
 
-    async columnsAction() {
-      const result = await this.getColumns();
-      this.json(result);
-    }
+  async ajax_edit() {
+    const {values} = this.post();
+    const {id, ...restValues} = values;
+    const {table_name} = await this.getRouterFields(['table_name', 'link_id']);
 
-    async ajaxAction() {
-        const type = this.ctx.query.q;
-        await this[`ajax_${type}`]();
-    }
+    const currentModel = await this.getCurrentModel();
+    const model = await this.getModel(currentModel);
+    const result = await model.ajax_edit(table_name, id, restValues);
+    const listData = await model.getListData(table_name, {id});
 
-    async ajax_insert() {
-      let {step, values, ...stepIds} = this.post();
-      const isRelate = Object.keys(values).some(key => key.indexOf(relate_sep) > -1);
+    return result ? this.json({status: true, id, listData: listData[0]}) : this.json({status: false});
 
-      Object.keys(values).map(key => {
-        Array.isArray(values[key]) && (values[key] = values[key].join(','));
-      });
+  }
 
-      let {id, table_name} = await this.getRouterFields(['table_name', 'id']);
-      let moduleTableName = table_name, pid = id;
-
-      if (step > 0) {
-        let count = 1;
-        while (count <= step) {
-          const {id, table_name, pfield} = await this.model('frame_modules').where({pid}).find();
-          if (count++ === step) {
-            moduleTableName = table_name;
-            values[pfield] = stepIds[`step${count-2}`];
-          }
-          pid = id;
-        }
-      }
-
-      // todo: 暂时只做单表写入，之后补上多表
-
-      let insertId;
-
-      if (!isRelate) {
-          insertId = await this.model(moduleTableName).add(values);
-      }
-
-      this.json({status: true, id: insertId});
-    }
-
-    async ajax_edit() {
-      const {path, pk} = this.post();
-      const id = act_decrypt(pk);
-    }
-
-    async ajax_update() {
-
-    }
+  async ajax_delete() {
+    const {id} = this.post();
+    const table_name = await this.getRouterFields('table_name');
+    console.log(table_name);
+    const result = await this.model(table_name).where({id}).delete();
+    this.json({status: !!result});
+  }
 };

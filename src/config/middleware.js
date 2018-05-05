@@ -43,6 +43,7 @@ module.exports = [
   {
     handle: 'router',
     options: {
+      defaultModule: '',
       defaultController: 'Common/HyAll',
       defaultAction: 'all',
       enableDefaultRouter: true,

@@ -1,8 +1,37 @@
-import {decryption} from "../../common/utils/crypto";
+import {decryption, cryptoMd5} from "../../common/utils/crypto";
 
 const Base = require('../Common/HyBase');
 
-module.exports = class extends Base {
+export default class extends Base {
+  /**
+   * 登录态检查
+   * @returns {Promise.<void>}
+   */
+  async checkAuthAction() {
+    const isLogin = await this.session('isLogin');
+    const result = {status: isLogin};
+    if (!isLogin) {
+      const key = cryptoMd5(parseInt(Math.random() * 10000000, 10));
+      await this.session('LOGIN_KEY', key);
+
+      result.key = key;
+    }
+    this.json(result);
+  }
+
+  /**
+   * 基础信息输出
+   * @returns {Promise<*>}
+   */
+  async currentUserAction() {
+    const userInfo = await this.session('userInfo');
+    return this.json(userInfo);
+  }
+
+  /**
+   * 登入
+   * @returns {Promise<void>}
+   */
   async loginAction() {
     const ctx = this.ctx;
 
@@ -26,11 +55,10 @@ module.exports = class extends Base {
     const sessionId = this.cookie('@hy');
     const isSso = this.config('SINGLE_POINT_ONLINE');
     const userModel = this.model('frame_user');
-    const moduleModel = this.model('modules');
 
     userNo = decryption({data: userNo, key: loginKey});
 
-    const userInfo = await userModel.getUserInfo(userNo);
+    const userInfo = await userModel.where({'user_no': userNo, 'status': 1}).find();
 
     // 校验账号
     if (!userInfo.id) {
@@ -39,7 +67,12 @@ module.exports = class extends Base {
 
     const saveSessionId = await this.cache(`uid-${userInfo.id}`);
     const pwdKey = userInfo.password.substr(5, 32);
-    password = decryption({data: password, key: pwdKey});
+    try {
+      password = decryption({data: password, key: pwdKey});
+    } catch (e) {
+      return this.json({status: 'error', message: '输入的密码有误'});
+    }
+    
     // 校验密码
     if (userInfo.password !== password) {
       return this.json({status: 'error', message: '输入的密码有误'});
@@ -52,9 +85,6 @@ module.exports = class extends Base {
     // 登录成功 缓存相关信息
     const {id, role} = userInfo;
 
-    const access = await this.model('frame_access').where({'role_id': role}).getField('module_id', true);
- 
-    const modules = await moduleModel.getModules(access);
     // 更新登录记录
     await userModel.where({id: userInfo.id}).update({
       login_last_time: Date.now(),
@@ -68,7 +98,6 @@ module.exports = class extends Base {
     await this.cache(`uid-${userInfo.id}`, sessionId);
 
     // 用户信息缓存
-    await this.session('modules', modules);
     await this.session('userId', id);
     await this.session('roleId', role);
     delete userInfo.password;
@@ -80,7 +109,11 @@ module.exports = class extends Base {
   async onMobileLogin(userName, password) {
 
   }
-  
+
+  /**
+   * 登出
+   * @returns {Promise<void>}
+   */
   async logoutAction() {
     if (!this.session('userId')) {
       return;

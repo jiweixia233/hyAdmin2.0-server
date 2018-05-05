@@ -32,16 +32,41 @@ module.exports = class HyBase extends think.Controller {
     }
 
     async getRouterFields(fields) {
-        const modules = await this.session('modules');
-        const {path} = this.post();
-        const [, nav, module] = path.split('/');
-        const totalFields = modules.find(item => item.frame_nav.value === nav && item['module_name'] === module);
-        if (_.isString(fields)) {
-            return totalFields[fields]
-        }
+      const modules = await this.getModules();
+      const {step, steps, mainModule} = this.post();
 
-        if (_.isArray(fields)) {
-            return _.pick(totalFields, fields);
-        }
+      const [, nav, module] = mainModule.split('/');
+      const topLevelFields = modules.find(item => item.frame_nav.value === nav && item.module_name === module);
+
+      let currentModule = module;
+      let currentFields = topLevelFields;
+
+      if (step && steps && steps.length) {
+        const moduleUrl = steps[step].moduleUrl;
+        const [, nav, module] = moduleUrl.split('/');
+        currentModule = module;
+      }
+
+
+      while (step > 0 && currentFields.module_name !== currentModule) {
+        currentFields = currentFields.child
+      }
+
+      if (_.isString(fields)) {
+          return currentFields[fields]
+      }
+
+      if (_.isArray(fields)) {
+          return _.pick(currentFields, fields);
+      }
+    }
+
+    async getModules() {
+      const moduleModel = this.model('Common/Base');
+      const roleId = await this.session('roleId');
+
+      const access = await this.model('frame_access').where({'role_id': roleId}).getField('module_id');
+
+      return await moduleModel.getModules(access);
     }
 };
